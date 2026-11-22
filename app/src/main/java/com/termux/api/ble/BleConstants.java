@@ -3,7 +3,8 @@ package com.termux.api.ble;
 /**
  * Shared protocol constants for the Termux:API BLE bridge.
  *
- * Transport: an Android {@code LocalServerSocket} in the ABSTRACT namespace.
+ * Transport: TCP on 127.0.0.1 (localhost). Android SELinux blocks cross-app
+ *            abstract Unix sockets, so a loopback TCP port is used instead.
  * Framing:   newline-delimited UTF-8 JSON (one JSON object per line).
  *
  * Request:  {"id":1,"cmd":"scan.start","params":{...}}
@@ -15,8 +16,8 @@ public final class BleConstants {
 
     private BleConstants() {}
 
-    /** Abstract-namespace socket name. Python clients connect to b"\0" + this name. */
-    public static final String SOCKET_NAME = "com.termux.api.ble";
+    /** Loopback TCP port for the BLE JSON-RPC bridge. */
+    public static final int TCP_PORT = 7362;
 
     public static final String KEY_ID = "id";
     public static final String KEY_CMD = "cmd";
