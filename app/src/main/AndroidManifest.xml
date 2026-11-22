@@ -106,8 +106,11 @@
             android:exported="false" />
 
         <!-- Invisible activity used to request BLE runtime permissions for the socket bridge. -->
+        <!-- Use a translucent (not NoDisplay) theme: Android 14+ requires
+             NoDisplay activities to finish() before onResume() returns, which
+             is incompatible with waiting for the permission result. -->
         <activity android:name=".ble.BlePermissionActivity"
-            android:theme="@android:style/Theme.NoDisplay"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:noHistory="true"
             android:excludeFromRecents="true"
             android:exported="false" />
