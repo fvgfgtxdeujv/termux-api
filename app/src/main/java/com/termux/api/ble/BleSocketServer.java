@@ -30,8 +30,11 @@ import java.util.concurrent.Executors;
  * "address" parameter. If "address" is omitted, the manager falls back to the
  * sole connected device (or errors when more than one is connected).
  *
- * Security: only processes sharing the Termux UID (sharedUserId="com.termux")
- * are accepted, checked via getPeerCredentials().getUid().
+ * Security (no longer relies on deprecated android:sharedUserId):
+ *   - A client whose UID matches our own is auto-authenticated (legacy path).
+ *   - Otherwise the client must send {"cmd":"auth","params":{"token":"..."}}
+ *     with the pairing token shown in the app. Until authenticated, only the
+ *     "auth" command is accepted.
  */
 public class BleSocketServer {
 
@@ -48,6 +51,8 @@ public class BleSocketServer {
     public BleSocketServer(Application app) {
         this.mApp = app;
         this.mContext = app.getApplicationContext();
+        // Ensure a token exists so the UI and clients see the same one.
+        BleAuthToken.getOrCreate(mContext);
         this.mManager = new BleManager(mContext, this::broadcastEvent);
     }
 
@@ -80,17 +85,17 @@ public class BleSocketServer {
     }
 
     private void handleClient(LocalSocket client) {
+        // Determine initial auth state. Same UID (legacy shared-user installs)
+        // is trusted automatically; all others must present the pairing token.
+        boolean sameUid = false;
         try {
             int peerUid = client.getPeerCredentials().getUid();
-            if (peerUid != mApp.getApplicationInfo().uid) {
-                Log.w(TAG, "Rejecting BLE client with uid " + peerUid);
-                client.close();
-                return;
+            sameUid = peerUid == mApp.getApplicationInfo().uid;
+            if (!sameUid) {
+                Log.i(TAG, "BLE client from different uid " + peerUid + " requires token auth");
             }
         } catch (IOException e) {
-            Log.e(TAG, "getPeerCredentials failed", e);
-            try { client.close(); } catch (IOException ignored) {}
-            return;
+            Log.w(TAG, "getPeerCredentials failed; requiring token auth", e);
         }
 
         final ClientConnection conn;
@@ -101,8 +106,9 @@ public class BleSocketServer {
             try { client.close(); } catch (IOException ignored) {}
             return;
         }
+        conn.authenticated = sameUid;
         mClients.add(conn);
-        Log.i(TAG, "BLE client connected");
+        Log.i(TAG, "BLE client connected (authenticated=" + sameUid + ")");
         try {
             BufferedReader reader = new BufferedReader(
                     new InputStreamReader(client.getInputStream(), StandardCharsets.UTF_8));
@@ -137,6 +143,27 @@ public class BleSocketServer {
             id = req.opt(BleConstants.KEY_ID);
             String cmd = req.optString(BleConstants.KEY_CMD, "");
             JSONObject params = req.optJSONObject(BleConstants.KEY_PARAMS);
+
+            // --- authentication gate ---
+            if ("auth".equals(cmd)) {
+                String token = params != null ? params.optString("token", "") : "";
+                // Already authenticated (same-UID legacy path): always OK.
+                // Read token dynamically so rotation takes effect immediately.
+                if (conn.authenticated || BleAuthToken.matches(BleAuthToken.getOrCreate(mContext), token)) {
+                    conn.authenticated = true;
+                    conn.send(okResponse(id, new JSONObject().put("authenticated", true)));
+                    Log.i(TAG, "BLE client authenticated via token");
+                } else {
+                    conn.send(errorResponse(id, BleConstants.ERR_UNAUTHORIZED, "Invalid token"));
+                    Log.w(TAG, "BLE client failed token auth");
+                }
+                return;
+            }
+            if (!conn.authenticated) {
+                conn.send(errorResponse(id, BleConstants.ERR_UNAUTHORIZED,
+                        "Not authenticated. Send {\"cmd\":\"auth\",\"params\":{\"token\":\"...\"}} first."));
+                return;
+            }
 
             switch (cmd) {
                 case "ping":
@@ -375,6 +402,7 @@ public class BleSocketServer {
         private final LocalSocket mSocket;
         private final BufferedWriter mWriter;
         private volatile boolean mClosed = false;
+        volatile boolean authenticated = false;
 
         ClientConnection(LocalSocket socket) throws IOException {
             this.mSocket = socket;
