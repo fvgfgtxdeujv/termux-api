@@ -36,4 +36,5 @@ public final class BleConstants {
     public static final String ERR_OPERATION = "operation_failed";
     public static final String ERR_TIMEOUT = "timeout";
     public static final String ERR_INTERNAL = "internal_error";
+    public static final String ERR_UNAUTHORIZED = "unauthorized";
 }
