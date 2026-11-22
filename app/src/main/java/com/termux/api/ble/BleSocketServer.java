@@ -93,7 +93,14 @@ public class BleSocketServer {
             return;
         }
 
-        ClientConnection conn = new ClientConnection(client);
+        final ClientConnection conn;
+        try {
+            conn = new ClientConnection(client);
+        } catch (IOException e) {
+            Log.e(TAG, "Failed to create client connection", e);
+            try { client.close(); } catch (IOException ignored) {}
+            return;
+        }
         mClients.add(conn);
         Log.i(TAG, "BLE client connected");
         try {

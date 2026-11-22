@@ -63,8 +63,8 @@ public class BlePermissionActivity extends Activity {
         }
         sPendingCallback = callback;
         Intent intent = new Intent(context, BlePermissionActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putStringArrayExtra(EXTRA_PERMISSIONS, permissions);
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.putExtra(EXTRA_PERMISSIONS, permissions);
         context.startActivity(intent);
     }
 
