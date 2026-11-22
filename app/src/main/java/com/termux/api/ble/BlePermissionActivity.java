@@ -8,8 +8,6 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.util.Log;
 
-import com.termux.shared.android.PermissionUtils;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -45,7 +43,7 @@ public class BlePermissionActivity extends Activity {
 
     public static boolean hasPermissions(Context context) {
         for (String p : requiredPermissions()) {
-            if (!PermissionUtils.checkPermission(context, p)) return false;
+            if (context.checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) return false;
         }
         return true;
     }
@@ -69,14 +67,19 @@ public class BlePermissionActivity extends Activity {
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
+    protected void onCreate(android.os.Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        // Request once in onCreate (not onResume) to avoid duplicate requests
+        // when the permission dialog closes and this activity resumes.
         String[] perms = getIntent().getStringArrayExtra(EXTRA_PERMISSIONS);
         if (perms == null || perms.length == 0) {
             finish();
             return;
         }
-        PermissionUtils.requestPermissions(this, perms, REQ_CODE);
+        // Request all permissions at once using the platform API (API 23+).
+        // Avoids the termux-shared helper which sleeps on the main thread and
+        // issues one request per permission with the same code (broken for multiple).
+        requestPermissions(perms, REQ_CODE);
     }
 
     @Override
