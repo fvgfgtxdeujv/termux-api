@@ -10,6 +10,7 @@ import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.termux.api.TermuxAPIApplication;
+import com.termux.api.ble.BleAuthToken;
 import com.termux.api.settings.activities.TermuxAPISettingsActivity;
 import com.termux.api.util.ViewUtils;
 import com.termux.shared.activity.ActivityUtils;
@@ -31,6 +32,7 @@ public class TermuxAPIMainActivity extends AppCompatActivity {
 
     private Button mDisableBatteryOptimization;
     private Button mGrantDisplayOverOtherAppsPermission;
+    private TextView mBleTokenView;
 
     public static final String LOG_TAG = "TermuxAPIMainActivity";
 
@@ -60,6 +62,22 @@ public class TermuxAPIMainActivity extends AppCompatActivity {
         mDisplayOverOtherAppsPermissionNotGrantedWarning = findViewById(R.id.textview_display_over_other_apps_not_granted_warning);
         mGrantDisplayOverOtherAppsPermission = findViewById(R.id.button_grant_display_over_other_apps_permission);
         mGrantDisplayOverOtherAppsPermission.setOnClickListener(v -> requestDisplayOverOtherAppsPermission());
+
+        // BLE bridge pairing token.
+        mBleTokenView = findViewById(R.id.textview_ble_token);
+        refreshBleToken();
+        Button rotateBleToken = findViewById(R.id.btn_rotate_ble_token);
+        rotateBleToken.setOnClickListener(v -> {
+            BleAuthToken.rotate(this);
+            refreshBleToken();
+            android.widget.Toast.makeText(this, "BLE token rotated. Existing clients must re-authenticate.", android.widget.Toast.LENGTH_SHORT).show();
+        });
+    }
+
+    private void refreshBleToken() {
+        if (mBleTokenView != null) {
+            mBleTokenView.setText(BleAuthToken.getOrCreate(this));
+        }
     }
 
     @Override
