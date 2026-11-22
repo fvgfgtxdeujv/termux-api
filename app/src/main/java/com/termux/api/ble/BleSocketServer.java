@@ -2,8 +2,6 @@ package com.termux.api.ble;
 
 import android.app.Application;
 import android.content.Context;
-import android.net.LocalServerSocket;
-import android.net.LocalSocket;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -15,6 +13,9 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,18 +24,17 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Long-lived Unix-domain JSON-RPC server for the BLE bridge.
+ * Long-lived loopback TCP JSON-RPC server for the BLE bridge.
  *
- * Newline-delimited JSON in both directions. Multiple clients may connect;
- * each connection to a BLE device is identified by its MAC address in the
- * "address" parameter. If "address" is omitted, the manager falls back to the
- * sole connected device (or errors when more than one is connected).
+ * Transport is 127.0.0.1:<TCP_PORT> because Android SELinux blocks cross-app
+ * abstract Unix sockets (and android:sharedUserId is deprecated). Any app with
+ * INTERNET can reach loopback, so a pairing token is mandatory.
  *
- * Security (no longer relies on deprecated android:sharedUserId):
- *   - A client whose UID matches our own is auto-authenticated (legacy path).
- *   - Otherwise the client must send {"cmd":"auth","params":{"token":"..."}}
- *     with the pairing token shown in the app. Until authenticated, only the
- *     "auth" command is accepted.
+ * Newline-delimited JSON in both directions. Each BLE device connection is
+ * identified by its MAC address in the "address" parameter.
+ *
+ * Security: every client must send {"cmd":"auth","params":{"token":"..."}}
+ * with the token shown in the app before any other command is accepted.
  */
 public class BleSocketServer {
 
@@ -61,20 +61,20 @@ public class BleSocketServer {
         if (mRunning) return;
         mRunning = true;
         mAcceptThread = new Thread(() -> {
-            LocalServerSocket server = null;
+            ServerSocket server = null;
             try {
-                server = new LocalServerSocket(BleConstants.SOCKET_NAME);
-                Log.i(TAG, "BLE socket listening at abstract://" + BleConstants.SOCKET_NAME);
+                server = new ServerSocket(BleConstants.TCP_PORT, 16, InetAddress.getByName("127.0.0.1"));
+                Log.i(TAG, "BLE TCP server listening at 127.0.0.1:" + BleConstants.TCP_PORT);
                 while (mRunning) {
                     try {
-                        LocalSocket client = server.accept();
+                        Socket client = server.accept();
                         mWorkers.execute(() -> handleClient(client));
                     } catch (IOException e) {
                         if (mRunning) Log.e(TAG, "accept failed", e);
                     }
                 }
             } catch (Throwable t) {
-                Log.e(TAG, "Could not start BLE socket server", t);
+                Log.e(TAG, "Could not start BLE TCP server", t);
             } finally {
                 if (server != null) {
                     try { server.close(); } catch (IOException ignored) {}
@@ -84,20 +84,9 @@ public class BleSocketServer {
         mAcceptThread.start();
     }
 
-    private void handleClient(LocalSocket client) {
-        // Determine initial auth state. Same UID (legacy shared-user installs)
-        // is trusted automatically; all others must present the pairing token.
-        boolean sameUid = false;
-        try {
-            int peerUid = client.getPeerCredentials().getUid();
-            sameUid = peerUid == mApp.getApplicationInfo().uid;
-            if (!sameUid) {
-                Log.i(TAG, "BLE client from different uid " + peerUid + " requires token auth");
-            }
-        } catch (IOException e) {
-            Log.w(TAG, "getPeerCredentials failed; requiring token auth", e);
-        }
-
+    private void handleClient(Socket client) {
+        // Loopback TCP is reachable by any app, so every client must authenticate
+        // with the pairing token. No UID shortcut (TCP has no peer UID anyway).
         final ClientConnection conn;
         try {
             conn = new ClientConnection(client);
@@ -106,9 +95,9 @@ public class BleSocketServer {
             try { client.close(); } catch (IOException ignored) {}
             return;
         }
-        conn.authenticated = sameUid;
+        conn.authenticated = false;
         mClients.add(conn);
-        Log.i(TAG, "BLE client connected (authenticated=" + sameUid + ")");
+        Log.i(TAG, "BLE client connected from " + client.getInetAddress() + " (awaiting auth)");
         try {
             BufferedReader reader = new BufferedReader(
                     new InputStreamReader(client.getInputStream(), StandardCharsets.UTF_8));
@@ -399,12 +388,12 @@ public class BleSocketServer {
 
     /** One open client connection; writes are synchronized so events/responses do not interleave. */
     private static class ClientConnection {
-        private final LocalSocket mSocket;
+        private final Socket mSocket;
         private final BufferedWriter mWriter;
         private volatile boolean mClosed = false;
         volatile boolean authenticated = false;
 
-        ClientConnection(LocalSocket socket) throws IOException {
+        ClientConnection(Socket socket) throws IOException {
             this.mSocket = socket;
             this.mWriter = new BufferedWriter(
                     new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
